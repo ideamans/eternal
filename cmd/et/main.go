@@ -67,7 +67,7 @@ func serverCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 2840, "Port to listen on")
-	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "Host to bind to")
+	cmd.Flags().StringVar(&host, "host", "0.0.0.0", "Host to bind to")
 	return cmd
 }
 

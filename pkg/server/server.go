@@ -195,7 +195,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ListenAndServe(addr string) error {
 	parts := strings.SplitN(addr, ":", 2)
-	host := "127.0.0.1"
+	host := "0.0.0.0"
 	port := "2840"
 	if len(parts) == 2 {
 		if parts[0] != "" {
