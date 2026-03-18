@@ -12,6 +12,7 @@ export interface Session {
 
 export interface ServerInfo {
   hostname: string
+  version: string
 }
 
 export async function getInfo(): Promise<ServerInfo> {

@@ -14,6 +14,7 @@ function init() {
           <div class="flex items-center gap-2">
             <h1 class="text-sm font-bold text-gray-200 tracking-wide">ETERNAL</h1>
             <span id="hostname" class="text-xs text-gray-500 font-mono"></span>
+            <span id="version" class="text-[10px] text-gray-600 font-mono"></span>
           </div>
         </div>
         <div id="session-list" class="flex-1 overflow-y-auto"></div>
@@ -29,6 +30,8 @@ function init() {
   getInfo().then((info) => {
     const el = document.getElementById('hostname')
     if (el) el.textContent = info.hostname
+    const ver = document.getElementById('version')
+    if (ver && info.version) ver.textContent = `v${info.version}`
   })
 
   refreshSessionList()

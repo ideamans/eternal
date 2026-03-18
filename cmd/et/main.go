@@ -62,6 +62,7 @@ func serverCmd() *cobra.Command {
 		Short: "Start the eternal server daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			server.WebDist = webDist
+			server.Version = version
 			s := server.New()
 			addr := fmt.Sprintf("%s:%d", host, port)
 			return s.ListenAndServe(addr)

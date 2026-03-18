@@ -18,6 +18,9 @@ import (
 // WebDist is set from outside (cmd/et) to inject the embedded FS.
 var WebDist embed.FS
 
+// Version is set from outside (cmd/et) to inject the build version.
+var Version string
+
 type Server struct {
 	manager  *session.Manager
 	upgrader websocket.Upgrader
@@ -74,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"hostname": s.hostname,
+		"version":  Version,
 	})
 }
 
