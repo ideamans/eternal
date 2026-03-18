@@ -21,11 +21,14 @@ var WebDist embed.FS
 type Server struct {
 	manager  *session.Manager
 	upgrader websocket.Upgrader
+	hostname string
 }
 
 func New() *Server {
+	hostname, _ := os.Hostname()
 	return &Server{
-		manager: session.NewManager(),
+		manager:  session.NewManager(),
+		hostname: hostname,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -52,12 +55,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(distFS))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		// SPA fallback: serve index.html for non-file paths
 		if r.URL.Path != "/" {
-			// Try to serve the file directly
 			f, err := distFS.(fs.ReadFileFS).ReadFile(r.URL.Path[1:])
 			if err != nil {
-				// File not found, serve index.html for SPA routing
 				r.URL.Path = "/"
 			} else {
 				_ = f
@@ -72,9 +72,8 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	hostname, _ := os.Hostname()
 	writeJSON(w, http.StatusOK, map[string]string{
-		"hostname": hostname,
+		"hostname": s.hostname,
 	})
 }
 
@@ -137,6 +136,19 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "killed"})
 }
 
+// wsClientConn adapts *websocket.Conn to session.ClientConn.
+type wsClientConn struct {
+	conn *websocket.Conn
+}
+
+func (w *wsClientConn) WriteMessage(data []byte) error {
+	return w.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func (w *wsClientConn) Close() error {
+	return w.conn.Close()
+}
+
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess := s.manager.Get(id)
@@ -156,8 +168,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientConn := &wsClientConn{conn: conn}
 	clientID := fmt.Sprintf("%s-%p", id, conn)
-	sess.AddClient(clientID, conn)
+	sess.AddClient(clientID, clientConn)
 	defer sess.RemoveClient(clientID)
 
 	for {

@@ -1,0 +1,33 @@
+version: 2
+
+before:
+  hooks:
+    - bash -c "cd web && npm ci && npm run build"
+    - bash -c "rm -rf cmd/et/dist && cp -r web/dist cmd/et/dist"
+
+builds:
+  - main: ./cmd/et
+    binary: et
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

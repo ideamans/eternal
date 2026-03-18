@@ -26,8 +26,9 @@ var defaultAddr = "http://127.0.0.1:2840"
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "et",
-		Short: "Eternal - Persistent Terminal Session Manager",
+		Use:     "et",
+		Short:   "Eternal - Persistent Terminal Session Manager",
+		Version: version,
 	}
 
 	rootCmd.PersistentFlags().StringP("server", "s", defaultAddr, "Server address")

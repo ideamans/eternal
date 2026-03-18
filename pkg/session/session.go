@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
-	"github.com/gorilla/websocket"
 	"github.com/ideamans/eternal/pkg/protocol"
 )
 
@@ -26,28 +23,30 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	LastUsed  time.Time `json:"last_used"`
 
-	cmd        *exec.Cmd
-	ptmx       *os.File
+	ptyDev     PTY
+	process    Process
 	exitCode   *int
-	clients    map[string]*Client
-	scrollback []byte // ring buffer of recent output for replay
+	clients    map[string]*clientEntry
+	scrollback []byte
 	mu         sync.Mutex
 	onExit     func(s *Session)
 }
 
-type Client struct {
+type clientEntry struct {
 	ID   string
-	Conn *websocket.Conn
+	Conn ClientConn
 }
 
 type CreateOptions struct {
-	ID      string
-	Name    string
-	Command []string
-	Dir     string
-	Cols    int
-	Rows    int
-	OnExit  func(s *Session)
+	ID         string
+	Name       string
+	Command    []string
+	Dir        string
+	Cols       int
+	Rows       int
+	OnExit     func(s *Session)
+	PTYFactory PTYFactory
+	OSEnv      OSEnv
 }
 
 func New(opts CreateOptions) (*Session, error) {
@@ -55,12 +54,13 @@ func New(opts CreateOptions) (*Session, error) {
 		return nil, errors.New("command is required")
 	}
 
-	cmd := exec.Command(opts.Command[0], opts.Command[1:]...)
-	cmd.Env = os.Environ()
-	if opts.Dir != "" {
-		if info, err := os.Stat(opts.Dir); err == nil && info.IsDir() {
-			cmd.Dir = opts.Dir
-		}
+	factory := opts.PTYFactory
+	if factory == nil {
+		factory = &RealPTYFactory{}
+	}
+	osEnv := opts.OSEnv
+	if osEnv == nil {
+		osEnv = &RealOSEnv{}
 	}
 
 	cols := opts.Cols
@@ -72,10 +72,14 @@ func New(opts CreateOptions) (*Session, error) {
 		rows = 24
 	}
 
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	})
+	dir := opts.Dir
+	if dir != "" {
+		if info, err := osEnv.Stat(dir); err != nil || !info.IsDir() {
+			dir = ""
+		}
+	}
+
+	p, proc, err := factory.Start(opts.Command, dir, osEnv.Environ(), cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start pty: %w", err)
 	}
@@ -89,9 +93,9 @@ func New(opts CreateOptions) (*Session, error) {
 		Rows:      rows,
 		CreatedAt: time.Now(),
 		LastUsed:  time.Now(),
-		cmd:       cmd,
-		ptmx:      ptmx,
-		clients:   make(map[string]*Client),
+		ptyDev:    p,
+		process:   proc,
+		clients:   make(map[string]*clientEntry),
 		onExit:    opts.OnExit,
 	}
 
@@ -105,7 +109,7 @@ func New(opts CreateOptions) (*Session, error) {
 func (s *Session) readLoop() {
 	buf := make([]byte, 4096)
 	for {
-		n, err := s.ptmx.Read(buf)
+		n, err := s.ptyDev.Read(buf)
 		if err != nil {
 			if err != io.EOF {
 				// PTY closed
@@ -123,13 +127,7 @@ func (s *Session) readLoop() {
 
 // waitProcess waits for the command to exit and cleans up.
 func (s *Session) waitProcess() {
-	exitCode := 0
-	if err := s.cmd.Wait(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		}
-	}
+	exitCode, _ := s.process.Wait()
 
 	s.mu.Lock()
 	s.exitCode = &exitCode
@@ -156,7 +154,6 @@ func (s *Session) broadcast(msg protocol.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Append to scrollback buffer for replay on new client connect
 	if msg.Type == protocol.TypeOutput && len(msg.Data) > 0 {
 		s.scrollback = append(s.scrollback, msg.Data...)
 		if len(s.scrollback) > maxScrollback {
@@ -165,7 +162,7 @@ func (s *Session) broadcast(msg protocol.Message) {
 	}
 
 	for id, c := range s.clients {
-		if err := c.Conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		if err := c.Conn.WriteMessage(data); err != nil {
 			c.Conn.Close()
 			delete(s.clients, id)
 		}
@@ -173,10 +170,10 @@ func (s *Session) broadcast(msg protocol.Message) {
 	s.Clients = len(s.clients)
 }
 
-func (s *Session) AddClient(id string, conn *websocket.Conn) {
+func (s *Session) AddClient(id string, conn ClientConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.clients[id] = &Client{ID: id, Conn: conn}
+	s.clients[id] = &clientEntry{ID: id, Conn: conn}
 	s.Clients = len(s.clients)
 	s.LastUsed = time.Now()
 
@@ -187,7 +184,7 @@ func (s *Session) AddClient(id string, conn *websocket.Conn) {
 		Rows: s.Rows,
 	}
 	if data, err := json.Marshal(resizeMsg); err == nil {
-		conn.WriteMessage(websocket.TextMessage, data)
+		conn.WriteMessage(data)
 	}
 
 	// Replay scrollback buffer to the new client
@@ -197,7 +194,7 @@ func (s *Session) AddClient(id string, conn *websocket.Conn) {
 			Data: s.scrollback,
 		}
 		if data, err := json.Marshal(msg); err == nil {
-			conn.WriteMessage(websocket.TextMessage, data)
+			conn.WriteMessage(data)
 		}
 	}
 }
@@ -226,7 +223,7 @@ func (s *Session) WriteInput(data []byte) error {
 	s.mu.Lock()
 	s.LastUsed = time.Now()
 	s.mu.Unlock()
-	_, err := s.ptmx.Write(data)
+	_, err := s.ptyDev.Write(data)
 	return err
 }
 
@@ -236,12 +233,8 @@ func (s *Session) Resize(cols, rows int) error {
 	s.Rows = rows
 	s.mu.Unlock()
 
-	err := pty.Setsize(s.ptmx, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	})
+	err := s.ptyDev.Resize(cols, rows)
 
-	// Broadcast new size to all clients (browser viewers follow this)
 	s.broadcast(protocol.Message{
 		Type: protocol.TypeResize,
 		Cols: cols,
@@ -251,12 +244,9 @@ func (s *Session) Resize(cols, rows int) error {
 	return err
 }
 
-// Kill sends SIGTERM to the process.
+// Kill sends SIGKILL to the process.
 func (s *Session) Kill() error {
-	if s.cmd.Process == nil {
-		return nil
-	}
-	return s.cmd.Process.Signal(os.Kill)
+	return s.process.Signal(os.Kill)
 }
 
 func (s *Session) IsAlive() bool {
@@ -266,5 +256,21 @@ func (s *Session) IsAlive() bool {
 }
 
 func (s *Session) Close() {
-	s.ptmx.Close()
+	s.ptyDev.Close()
+}
+
+// Scrollback returns a copy of the current scrollback buffer (for testing).
+func (s *Session) Scrollback() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	buf := make([]byte, len(s.scrollback))
+	copy(buf, s.scrollback)
+	return buf
+}
+
+// ExitCode returns the exit code if the process has exited, or nil.
+func (s *Session) ExitCode() *int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.exitCode
 }
