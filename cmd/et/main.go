@@ -40,6 +40,7 @@ func main() {
 		lsCmd(),
 		killCmd(),
 		installCmd(),
+		uninstallCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -431,6 +432,67 @@ echo "  Status:     systemctl --user status eternal.service"
 echo "  Logs:       journalctl --user -u eternal.service -f"
 echo "  Restart:    systemctl --user restart eternal.service"
 echo "  Uninstall:  systemctl --user stop eternal.service && systemctl --user disable eternal.service && rm $UNIT_DIR/eternal.service"
+`
+}
+
+func uninstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall",
+		Short: "Output daemon uninstall script for this platform",
+		Run: func(cmd *cobra.Command, args []string) {
+			script := generateUninstallScript()
+			fmt.Print(script)
+		},
+	}
+}
+
+func generateUninstallScript() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return macOSUninstallScript()
+	case "linux":
+		return linuxUninstallScript()
+	default:
+		return fmt.Sprintf("#!/bin/bash\necho 'Unsupported platform: %s'\nexit 1\n", runtime.GOOS)
+	}
+}
+
+func macOSUninstallScript() string {
+	return `#!/bin/bash
+set -eu
+
+# -----------------------------------------------------------
+# Eternal Terminal - macOS LaunchAgent Uninstaller
+# -----------------------------------------------------------
+
+PLIST="$HOME/Library/LaunchAgents/com.eternal.et.plist"
+DOMAIN="gui/$(id -u)"
+
+launchctl bootout "$DOMAIN/com.eternal.et" 2>/dev/null || true
+rm -f "$PLIST"
+
+echo "eternal server uninstalled."
+echo "  The plist has been removed and the service has been stopped."
+`
+}
+
+func linuxUninstallScript() string {
+	return `#!/bin/bash
+set -eu
+
+# -----------------------------------------------------------
+# Eternal Terminal - systemd User Service Uninstaller
+# -----------------------------------------------------------
+
+UNIT_DIR="$HOME/.config/systemd/user"
+
+systemctl --user stop eternal.service 2>/dev/null || true
+systemctl --user disable eternal.service 2>/dev/null || true
+rm -f "$UNIT_DIR/eternal.service"
+systemctl --user daemon-reload
+
+echo "eternal server uninstalled."
+echo "  The service has been stopped, disabled, and removed."
 `
 }
 
