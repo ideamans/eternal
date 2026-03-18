@@ -1,0 +1,7 @@
+# Go binary
+/et
+
+# Web build output
+web/dist/
+web/node_modules/
+cmd/et/dist/
