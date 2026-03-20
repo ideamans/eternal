@@ -4,10 +4,12 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -51,6 +53,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("GET /api/peers", s.handlePeers)
+
+	// Peer proxy (REST)
+	mux.HandleFunc("GET /api/peer/{index}/info", s.handlePeerProxy)
+	mux.HandleFunc("GET /api/peer/{index}/sessions", s.handlePeerProxy)
+	mux.HandleFunc("DELETE /api/peer/{index}/sessions/{id}", s.handlePeerProxy)
+
+	// Peer proxy (WebSocket)
+	mux.HandleFunc("GET /ws/peer/{index}/session/{id}", s.handlePeerWebSocketProxy)
 
 	// WebSocket
 	mux.HandleFunc("GET /ws/session/{id}", s.handleWebSocket)
@@ -106,6 +116,114 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 		peers = []string{}
 	}
 	writeJSON(w, http.StatusOK, peers)
+}
+
+// getPeerURL resolves the peer index to a base URL.
+func getPeerURL(r *http.Request) (string, error) {
+	idx, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || idx < 0 || idx >= len(Peers) {
+		return "", fmt.Errorf("invalid peer index")
+	}
+	return Peers[idx], nil
+}
+
+// handlePeerProxy forwards REST API requests to a peer server.
+func (s *Server) handlePeerProxy(w http.ResponseWriter, r *http.Request) {
+	peerURL, err := getPeerURL(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Build the upstream path: strip /api/peer/{index} prefix
+	prefix := fmt.Sprintf("/api/peer/%s", r.PathValue("index"))
+	upstreamPath := strings.TrimPrefix(r.URL.Path, prefix)
+	targetURL := peerURL + "/api" + upstreamPath
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("peer unreachable: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handlePeerWebSocketProxy proxies a WebSocket connection to a peer server.
+func (s *Server) handlePeerWebSocketProxy(w http.ResponseWriter, r *http.Request) {
+	peerURL, err := getPeerURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sessionID := r.PathValue("id")
+
+	// Connect to upstream peer WebSocket
+	wsScheme := "ws"
+	if strings.HasPrefix(peerURL, "https://") {
+		wsScheme = "wss"
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(peerURL, "http://"), "https://")
+	upstreamURL := fmt.Sprintf("%s://%s/ws/session/%s", wsScheme, host, sessionID)
+
+	upstreamConn, _, err := websocket.DefaultDialer.Dial(upstreamURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to connect to peer: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer upstreamConn.Close()
+
+	// Upgrade client connection
+	clientConn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("websocket upgrade failed: %v", err)
+		return
+	}
+	defer clientConn.Close()
+
+	// Relay messages bidirectionally
+	done := make(chan struct{})
+
+	// upstream → client
+	go func() {
+		defer close(done)
+		for {
+			msgType, data, err := upstreamConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := clientConn.WriteMessage(msgType, data); err != nil {
+				return
+			}
+		}
+	}()
+
+	// client → upstream
+	go func() {
+		for {
+			msgType, data, err := clientConn.ReadMessage()
+			if err != nil {
+				upstreamConn.Close()
+				return
+			}
+			if err := upstreamConn.WriteMessage(msgType, data); err != nil {
+				return
+			}
+		}
+	}()
+
+	<-done
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

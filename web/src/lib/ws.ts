@@ -23,23 +23,21 @@ export interface ConnectOptions {
  * Connect to a session via WebSocket.
  * @param sessionId - The session ID to connect to.
  * @param opts - Callbacks for output, exit, open, and resize events.
- * @param serverBase - Base URL of the server (empty string for local).
+ * @param peerProxy - Peer proxy base path (e.g. "/api/peer/0"). Empty for local.
  */
-export function connectSession(sessionId: string, opts: ConnectOptions, serverBase = ''): SessionConnection {
-  let wsUrl: string
+export function connectSession(sessionId: string, opts: ConnectOptions, peerProxy = ''): SessionConnection {
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  let wsPath: string
 
-  if (serverBase) {
-    // Peer server: derive WebSocket URL from HTTP base URL
-    const url = new URL(serverBase)
-    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    wsUrl = `${wsProtocol}//${url.host}/ws/session/${sessionId}`
+  if (peerProxy) {
+    // Proxy through local server: /api/peer/{index} → /ws/peer/{index}
+    const wsProxy = peerProxy.replace('/api/peer/', '/ws/peer/')
+    wsPath = `${wsProxy}/session/${sessionId}`
   } else {
-    // Local server: use current page host
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    wsUrl = `${wsProtocol}//${location.host}/ws/session/${sessionId}`
+    wsPath = `/ws/session/${sessionId}`
   }
 
-  const ws = new WebSocket(wsUrl)
+  const ws = new WebSocket(`${wsProtocol}//${location.host}${wsPath}`)
 
   const queue: string[] = []
   let opened = false

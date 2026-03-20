@@ -16,19 +16,19 @@ export interface ServerInfo {
 }
 
 export interface AggregatedSession extends Session {
-  /** Base URL of the server this session belongs to. Empty string means local. */
-  serverBase: string
+  /** Proxy base path for this session's server. Empty string means local. */
+  peerProxy: string
   /** Hostname of the server this session belongs to. */
   serverHostname: string
 }
 
-export async function getInfo(baseUrl = ''): Promise<ServerInfo> {
-  const res = await fetch(`${baseUrl}/api/info`)
+export async function getInfo(basePath = '/api'): Promise<ServerInfo> {
+  const res = await fetch(`${basePath}/info`)
   return res.json()
 }
 
-export async function listSessions(baseUrl = ''): Promise<Session[]> {
-  const res = await fetch(`${baseUrl}/api/sessions`)
+export async function listSessions(basePath = '/api'): Promise<Session[]> {
+  const res = await fetch(`${basePath}/sessions`)
   return res.json()
 }
 
@@ -46,8 +46,8 @@ export async function createSession(opts: {
   return res.json()
 }
 
-export async function killSession(id: string, baseUrl = ''): Promise<void> {
-  await fetch(`${baseUrl}/api/sessions/${id}`, { method: 'DELETE' })
+export async function killSession(id: string, basePath = '/api'): Promise<void> {
+  await fetch(`${basePath}/sessions/${id}`, { method: 'DELETE' })
 }
 
 export async function getPeers(): Promise<string[]> {
@@ -57,23 +57,29 @@ export async function getPeers(): Promise<string[]> {
 
 /**
  * Fetch sessions from the local server and all peers, returning aggregated results.
+ * All requests go through the local server (peers are proxied via /api/peer/{index}/).
  */
 export async function listAllSessions(): Promise<AggregatedSession[]> {
-  const [localInfo, localSessions, peers] = await Promise.all([getInfo(), listSessions(), getPeers()])
+  const [localInfo, localSessions, peers] = await Promise.all([
+    getInfo('/api'),
+    listSessions('/api'),
+    getPeers(),
+  ])
 
   const result: AggregatedSession[] = localSessions.map((s) => ({
     ...s,
-    serverBase: '',
+    peerProxy: '',
     serverHostname: localInfo.hostname,
   }))
 
   if (peers.length > 0) {
     const peerResults = await Promise.allSettled(
-      peers.map(async (peerUrl) => {
-        const [info, sessions] = await Promise.all([getInfo(peerUrl), listSessions(peerUrl)])
+      peers.map(async (_peerUrl, index) => {
+        const basePath = `/api/peer/${index}`
+        const [info, sessions] = await Promise.all([getInfo(basePath), listSessions(basePath)])
         return sessions.map((s) => ({
           ...s,
-          serverBase: peerUrl,
+          peerProxy: basePath,
           serverHostname: info.hostname,
         }))
       }),

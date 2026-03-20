@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { connectSession } from '../lib/ws'
 
-export function renderTerminal(mount: HTMLElement, sessionId: string, serverBase = '') {
+export function renderTerminal(mount: HTMLElement, sessionId: string, peerProxy = '') {
   mount.innerHTML = `
     <div class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
       <span class="text-gray-400 text-xs font-mono">${sessionId.substring(0, 8)}</span>
@@ -74,7 +74,7 @@ export function renderTerminal(mount: HTMLElement, sessionId: string, serverBase
         updateScale()
       },
     },
-    serverBase,
+    peerProxy,
   )
 
   term.onData((data) => {
