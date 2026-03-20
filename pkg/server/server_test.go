@@ -3,23 +3,70 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/ideamans/eternal/pkg/agent"
 	"github.com/ideamans/eternal/pkg/protocol"
 )
 
+var (
+	testBinaryOnce sync.Once
+	testBinaryPath string
+	testBinaryErr  error
+)
+
+func buildTestBinary(t *testing.T) string {
+	t.Helper()
+	testBinaryOnce.Do(func() {
+		tmp, err := os.CreateTemp("", "et-test-*")
+		if err != nil {
+			testBinaryErr = err
+			return
+		}
+		tmp.Close()
+		testBinaryPath = tmp.Name()
+
+		cmd := exec.Command("go", "build", "-o", testBinaryPath, "../../cmd/et")
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			testBinaryErr = err
+		}
+	})
+	if testBinaryErr != nil {
+		t.Fatalf("build test binary: %v", testBinaryErr)
+	}
+	return testBinaryPath
+}
+
 // setupTestServer creates a test HTTP server backed by a real Server.
-// Sessions use real PTY processes (cat command) for true integration testing.
+// Sessions use agent processes for true integration testing.
 func setupTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
+
+	binPath := buildTestBinary(t)
+	ExecPath = binPath
+
+	// Use a short socket dir path (Unix sockets have path length limits on macOS)
+	testDir := fmt.Sprintf("/tmp/et-test-%d", os.Getpid())
+	os.MkdirAll(testDir, 0700)
+	t.Setenv("ETERNAL_SOCKET_DIR", testDir)
+	t.Cleanup(func() { os.RemoveAll(testDir) })
+
 	s := New()
 	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
+	t.Cleanup(func() {
+		ts.Close()
+		agent.CleanStale()
+	})
 	return ts, s
 }
 
@@ -44,7 +91,9 @@ func createSession(t *testing.T, ts *httptest.Server, command []string, name str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST /api/sessions status = %d, want 201", resp.StatusCode)
+		var errBody map[string]string
+		json.NewDecoder(resp.Body).Decode(&errBody)
+		t.Fatalf("POST /api/sessions status = %d, want 201, error: %v", resp.StatusCode, errBody)
 	}
 	var sess sessionResponse
 	json.NewDecoder(resp.Body).Decode(&sess)
@@ -179,7 +228,7 @@ func TestIntegration_CreateListKill(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Verify only one remains
 	resp, _ = http.Get(ts.URL + "/api/sessions")
@@ -279,11 +328,13 @@ func TestIntegration_MultipleClientsShareOutput(t *testing.T) {
 func TestIntegration_ProcessExitNotifiesClients(t *testing.T) {
 	ts, _ := setupTestServer(t)
 
-	sess := createSession(t, ts, []string{"echo", "done"}, "exit-test")
+	// Use bash -c to sleep briefly then exit, so we can connect before it dies
+	sess := createSession(t, ts, []string{"bash", "-c", "sleep 1 && exit 0"}, "exit-test")
 	conn := connectWS(t, ts, sess.ID)
 	reader := newWSReader(t, conn)
+	reader.collect(300 * time.Millisecond) // drain initial messages
 
-	msg := reader.waitFor(3*time.Second, func(m protocol.Message) bool {
+	msg := reader.waitFor(5*time.Second, func(m protocol.Message) bool {
 		return m.Type == protocol.TypeExit
 	})
 	if msg == nil {
@@ -293,7 +344,7 @@ func TestIntegration_ProcessExitNotifiesClients(t *testing.T) {
 		t.Errorf("exit code = %v, want 0", msg.ExitCode)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 	resp, _ := http.Get(ts.URL + "/api/sessions")
 	var sessions []sessionResponse
 	json.NewDecoder(resp.Body).Decode(&sessions)

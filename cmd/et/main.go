@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"runtime"
@@ -12,9 +14,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/ideamans/eternal/pkg/agent"
 	"github.com/ideamans/eternal/pkg/client"
 	"github.com/ideamans/eternal/pkg/protocol"
 	"github.com/ideamans/eternal/pkg/server"
+	"github.com/ideamans/eternal/pkg/watcher"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -41,6 +45,7 @@ func main() {
 		killCmd(),
 		installCmd(),
 		uninstallCmd(),
+		agentCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -65,6 +70,13 @@ func serverCmd() *cobra.Command {
 			server.WebDist = webDist
 			server.Version = version
 
+			// Set ExecPath for spawning agents
+			execPath, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("cannot determine executable path: %w", err)
+			}
+			server.ExecPath = execPath
+
 			// Merge --peer flags and ET_PEERS env var
 			allPeers := append([]string{}, peers...)
 			if envPeers := os.Getenv("ET_PEERS"); envPeers != "" {
@@ -75,15 +87,29 @@ func serverCmd() *cobra.Command {
 					}
 				}
 			}
-			// Normalize peer addresses: add default port if missing
 			for i, p := range allPeers {
 				allPeers[i] = normalizePeerAddr(p)
 			}
 			server.Peers = allPeers
 
 			s := server.New()
+
+			// Watch binary for changes and auto-restart
+			go watcher.WatchBinary(execPath, func() {
+				log.Println("Binary changed, shutting down for restart...")
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.Shutdown(ctx)
+			})
+
 			addr := fmt.Sprintf("%s:%d", host, port)
-			return s.ListenAndServe(addr)
+			err = s.ListenAndServe(addr)
+			if err != nil && err.Error() == "http: Server closed" {
+				// Graceful shutdown for auto-restart
+				log.Println("Server shut down, re-executing...")
+				return syscall.Exec(execPath, os.Args, os.Environ())
+			}
+			return err
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 2840, "Port to listen on")
@@ -536,6 +562,40 @@ systemctl --user daemon-reload
 echo "eternal server uninstalled."
 echo "  The service has been stopped, disabled, and removed."
 `
+}
+
+func agentCmd() *cobra.Command {
+	var id, name, dir string
+	var cols, rows int
+
+	cmd := &cobra.Command{
+		Use:    "agent",
+		Short:  "Run a session agent (internal)",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				shell := os.Getenv("SHELL")
+				if shell == "" {
+					shell = "/bin/sh"
+				}
+				args = []string{shell}
+			}
+			return agent.Run(agent.Options{
+				ID:      id,
+				Name:    name,
+				Command: args,
+				Dir:     dir,
+				Cols:    cols,
+				Rows:    rows,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&id, "id", "", "Session ID")
+	cmd.Flags().StringVar(&name, "name", "", "Session name")
+	cmd.Flags().StringVar(&dir, "dir", "", "Working directory")
+	cmd.Flags().IntVar(&cols, "cols", 80, "Terminal columns")
+	cmd.Flags().IntVar(&rows, "rows", 24, "Terminal rows")
+	return cmd
 }
 
 func formatTime(t time.Time) string {
