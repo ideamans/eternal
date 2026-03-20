@@ -20,7 +20,7 @@ export function renderTerminal(mount: HTMLElement, sessionId: string, peerProxy 
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 14,
-    fontFamily: '"Menlo", "DejaVu Sans Mono", "Consolas", "Lucida Console", monospace',
+    fontFamily: '"Hack Nerd Font Mono", "Menlo", "DejaVu Sans Mono", "Consolas", "Lucida Console", monospace',
     theme: {
       background: '#030712',
       foreground: '#e5e7eb',
