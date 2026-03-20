@@ -398,16 +398,16 @@ set -eu
 # The server starts automatically on login and restarts on crash.
 #
 # Management commands:
-#   Status:    launchctl list | grep com.eternal.et
+#   Status:    launchctl list | grep com.ideamans.eternal
 #   Logs:      tail -f /tmp/eternal.log
-#   Restart:   launchctl kickstart -k gui/$(id -u)/com.eternal.et
-#   Stop:      launchctl bootout gui/$(id -u)/com.eternal.et
-#   Disable:   launchctl bootout gui/$(id -u)/com.eternal.et && rm ~/Library/LaunchAgents/com.eternal.et.plist
-#   Uninstall: launchctl bootout gui/$(id -u)/com.eternal.et 2>/dev/null; rm -f ~/Library/LaunchAgents/com.eternal.et.plist
+#   Restart:   launchctl kickstart -k gui/$(id -u)/com.ideamans.eternal
+#   Stop:      launchctl bootout gui/$(id -u)/com.ideamans.eternal
+#   Disable:   launchctl bootout gui/$(id -u)/com.ideamans.eternal && rm ~/Library/LaunchAgents/com.ideamans.eternal.plist
+#   Uninstall: launchctl bootout gui/$(id -u)/com.ideamans.eternal 2>/dev/null; rm -f ~/Library/LaunchAgents/com.ideamans.eternal.plist
 # -----------------------------------------------------------
 
 ET_BIN="$(which et)"
-PLIST="$HOME/Library/LaunchAgents/com.eternal.et.plist"
+PLIST="$HOME/Library/LaunchAgents/com.ideamans.eternal.plist"
 DOMAIN="gui/$(id -u)"
 
 mkdir -p "$HOME/Library/LaunchAgents"
@@ -419,7 +419,7 @@ cat > "$PLIST" << PLIST_EOF
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.eternal.et</string>
+    <string>com.ideamans.eternal</string>
     <key>ProgramArguments</key>
     <array>
         <string>${ET_BIN}</string>
@@ -437,15 +437,15 @@ cat > "$PLIST" << PLIST_EOF
 </plist>
 PLIST_EOF
 
-launchctl bootout "$DOMAIN/com.eternal.et" 2>/dev/null || true
+launchctl bootout "$DOMAIN/com.ideamans.eternal" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 
 echo "eternal server installed and started."
 echo "  Auto-start: enabled (RunAtLoad)"
-echo "  Status:     launchctl list | grep com.eternal.et"
+echo "  Status:     launchctl list | grep com.ideamans.eternal"
 echo "  Logs:       tail -f /tmp/eternal.log"
-echo "  Restart:    launchctl kickstart -k $DOMAIN/com.eternal.et"
-echo "  Uninstall:  launchctl bootout $DOMAIN/com.eternal.et && rm $PLIST"
+echo "  Restart:    launchctl kickstart -k $DOMAIN/com.ideamans.eternal"
+echo "  Uninstall:  launchctl bootout $DOMAIN/com.ideamans.eternal && rm $PLIST"
 `
 }
 
@@ -534,10 +534,10 @@ set -eu
 # Eternal Terminal - macOS LaunchAgent Uninstaller
 # -----------------------------------------------------------
 
-PLIST="$HOME/Library/LaunchAgents/com.eternal.et.plist"
+PLIST="$HOME/Library/LaunchAgents/com.ideamans.eternal.plist"
 DOMAIN="gui/$(id -u)"
 
-launchctl bootout "$DOMAIN/com.eternal.et" 2>/dev/null || true
+launchctl bootout "$DOMAIN/com.ideamans.eternal" 2>/dev/null || true
 rm -f "$PLIST"
 
 echo "eternal server uninstalled."

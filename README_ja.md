@@ -71,6 +71,8 @@ et attach <名前|ID>
 | `et ls` | セッション一覧 |
 | `et kill <名前\|ID>` | セッション強制終了 (SIGKILL) |
 | `et install` | プラットフォーム用デーモンインストールスクリプトを出力 |
+| `et uninstall` | プラットフォーム用デーモンアンインストールスクリプトを出力 |
+| `et upgrade [version]` | GitHub Releasesからセルフアップデート (最新版または指定バージョン) |
 
 ## セッションライフサイクル
 
@@ -96,6 +98,7 @@ et run htop
 
 - サイドバーにセッション一覧 (作業ディレクトリでグループ化)
 - xterm.jsターミナル (CLIターミナルのサイズに追従、ブラウザが小さい場合は縮小表示)
+- **タイルビュー** — `Alt+T` で全セッションのグリッド表示に切替 (読み取り専用)。タイルクリックで単一セッション表示に戻る。
 - セッションごとのKillボタン
 - サーバーホスト名表示
 
@@ -133,28 +136,63 @@ ET_PEERS=server-a.local et server --peer server-b.local
 - ピアサーバーはブラウザから直接到達可能である必要があります（ローカルサーバーからだけでなく）。
 - ピアサーバーの `/api/*` エンドポイントはデフォルトでCORSが有効です。
 
+## アップグレード
+
+`et` バイナリを最新 (または指定) リリースに更新:
+
+```bash
+et upgrade          # 最新リリース
+et upgrade v0.4.1   # 特定バージョン
+```
+
+`et server` がデーモンとして動作中の場合、バイナリ変更を検知して自動的にサーバーが再起動します。
+
+## Docker
+
+リリースごとにマルチプラットフォーム (linux/amd64, linux/arm64) イメージがDocker Hubに公開されます:
+
+```bash
+docker run -p 2840:2840 ideamans/eternal:latest
+
+# ピアサーバー指定
+docker run -p 2840:2840 -e ET_PEERS=server-a.local,server-b.local ideamans/eternal:latest
+```
+
+ローカルビルド:
+
+```bash
+docker build -t eternal .
+```
+
 ## ビルド
 
 必要環境: Go 1.21+, Node.js 18+
 
 ```bash
-make build
+make build    # フルビルド (Web + Goバイナリ)
+make web      # Web UIのみ
+make go       # Goバイナリのみ
+make dev      # 開発モード (Webデブサーバー + Goサーバー)
+make clean    # 成果物の削除
 ```
 
-`web/` でnpm build → `cmd/et/dist/` にコピー → Goバイナリビルドを実行します。
+`make build` は `web/` でnpm build → `cmd/et/dist/` にコピー → Goバイナリビルドを実行します。
 
 ## プロジェクト構成
 
 ```
 eternal/
-├── cmd/et/          # シングルバイナリ (サーバー + クライアント)
+├── cmd/et/          # シングルバイナリ (サーバー + クライアント + アップグレード)
 ├── pkg/
+│   ├── agent/       # セッションエージェントプロセス (Unixソケット通信、ディスカバリ)
 │   ├── session/     # PTY管理、ライフサイクル、スクロールバックバッファ
 │   ├── server/      # HTTP/WSサーバー、REST API、Web UI配信
 │   ├── client/      # WebSocketクライアントライブラリ
-│   └── protocol/    # WebSocketメッセージ型定義
+│   ├── protocol/    # WebSocketメッセージ型定義
+│   └── watcher/     # バイナリ変更監視 (アップグレード時の自動再起動)
 ├── web/             # TypeScript + Vite + Tailwind CSS 4 サブプロジェクト
 │   └── src/
+├── Dockerfile       # マルチステージビルド (Node → Go → Alpine)
 └── Makefile
 ```
 

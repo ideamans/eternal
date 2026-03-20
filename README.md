@@ -71,6 +71,8 @@ Open `http://<host>:2840` in a browser. Click a session to connect.
 | `et ls` | List active sessions |
 | `et kill <name\|id>` | Kill a session (sends SIGKILL) |
 | `et install` | Output daemon install script for this platform |
+| `et uninstall` | Output daemon uninstall script for this platform |
+| `et upgrade [version]` | Self-update from GitHub Releases (latest or specific version) |
 
 ## Session Lifecycle
 
@@ -96,6 +98,7 @@ The embedded Web UI provides:
 
 - Session list in a sidebar, grouped by working directory
 - xterm.js terminal that follows the CLI terminal size (scales down if the browser is smaller)
+- **Tiled view** — Press `Alt+T` to toggle a grid view of all active sessions (read-only). Click a tile to switch to single session view.
 - Kill button per session
 - Server hostname display
 
@@ -133,28 +136,63 @@ Port defaults to **2840** if omitted. The scheme defaults to `http://`.
 - Peer servers must be reachable from the browser (not just from the local server).
 - Peer servers have CORS enabled by default on `/api/*` endpoints.
 
+## Upgrade
+
+Update the `et` binary to the latest (or a specific) release:
+
+```bash
+et upgrade          # latest release
+et upgrade v0.4.1   # specific version
+```
+
+If `et server` is running as a daemon, the binary watcher detects the replacement and automatically restarts the server.
+
+## Docker
+
+Pre-built multi-platform images (linux/amd64, linux/arm64) are published to Docker Hub on each release:
+
+```bash
+docker run -p 2840:2840 ideamans/eternal:latest
+
+# With peers
+docker run -p 2840:2840 -e ET_PEERS=server-a.local,server-b.local ideamans/eternal:latest
+```
+
+Or build locally:
+
+```bash
+docker build -t eternal .
+```
+
 ## Build
 
 Requirements: Go 1.21+, Node.js 18+
 
 ```bash
-make build
+make build    # Full build (web + Go binary)
+make web      # Web UI only
+make go       # Go binary only
+make dev      # Development mode (web dev server + Go server)
+make clean    # Remove artifacts
 ```
 
-This runs `npm install && npm run build` in `web/`, copies the output to `cmd/et/dist/`, then builds the Go binary.
+`make build` runs `npm install && npm run build` in `web/`, copies the output to `cmd/et/dist/`, then builds the Go binary.
 
 ## Architecture
 
 ```
 eternal/
-├── cmd/et/          # Single binary (server + client)
+├── cmd/et/          # Single binary (server + client + upgrade)
 ├── pkg/
+│   ├── agent/       # Session agent process (Unix socket IPC, discovery)
 │   ├── session/     # PTY management, lifecycle, scrollback buffer
 │   ├── server/      # HTTP/WS server, REST API, embedded Web UI
 │   ├── client/      # WebSocket client library
-│   └── protocol/    # WebSocket message types
+│   ├── protocol/    # WebSocket message types
+│   └── watcher/     # Binary change watcher (auto-restart on upgrade)
 ├── web/             # TypeScript + Vite + Tailwind CSS 4 sub-project
 │   └── src/
+├── Dockerfile       # Multi-stage build (Node → Go → Alpine)
 └── Makefile
 ```
 
