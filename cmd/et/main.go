@@ -29,6 +29,13 @@ var webDist embed.FS
 var defaultAddr = "http://127.0.0.1:2840"
 
 func main() {
+	// Shortcut: "et" alone or "et - cmd args..." → "et run [cmd args...]"
+	if len(os.Args) == 1 {
+		os.Args = append(os.Args, "run")
+	} else if len(os.Args) >= 2 && os.Args[1] == "-" {
+		os.Args = append([]string{os.Args[0], "run"}, os.Args[2:]...)
+	}
+
 	rootCmd := &cobra.Command{
 		Use:     "et",
 		Short:   "Eternal - Persistent Terminal Session Manager",

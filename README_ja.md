@@ -47,6 +47,14 @@ et run htop
 et run
 ```
 
+ショートカット — `et` 単独でシェル起動、`et -` は `et run` の省略形:
+
+```bash
+et              # et run と同じ
+et - htop       # et run htop と同じ
+et - vim todo   # et run vim todo と同じ
+```
+
 ### 3. 切断して再接続
 
 SSHを切断してもプロセスは継続。後から再接続:
@@ -65,6 +73,8 @@ et attach <名前|ID>
 |---|---|
 | `et server` | サーバーデーモン起動 (デフォルト: 0.0.0.0:2840) |
 | `et server --peer host1 --peer host2:3000` | ピアサーバー指定でセッション集約 |
+| `et` | `et run` のショートカット (デフォルトシェル起動) |
+| `et - [コマンド] [引数...]` | `et run [コマンド] [引数...]` のショートカット |
 | `et run [コマンド] [引数...]` | 新規永続セッションでコマンド実行 |
 | `et run --name work vim todo.md` | 名前付きセッション |
 | `et attach <名前\|ID>` | 既存セッションに再接続 |

@@ -47,6 +47,14 @@ Without arguments, your current shell (`$SHELL`) is launched:
 et run
 ```
 
+Shortcuts — `et` alone starts a shell, `et -` is shorthand for `et run`:
+
+```bash
+et              # same as: et run
+et - htop       # same as: et run htop
+et - vim todo   # same as: et run vim todo
+```
+
 ### 3. Disconnect and reconnect
 
 Disconnect SSH. The process keeps running. Reconnect later:
@@ -65,6 +73,8 @@ Open `http://<host>:2840` in a browser. Click a session to connect.
 |---|---|
 | `et server` | Start the server daemon (default: 0.0.0.0:2840) |
 | `et server --peer host1 --peer host2:3000` | Start with peer servers for session aggregation |
+| `et` | Shortcut for `et run` (start default shell) |
+| `et - [command] [args...]` | Shortcut for `et run [command] [args...]` |
 | `et run [command] [args...]` | Run a command in a new persistent session |
 | `et run --name work vim todo.md` | Run with a session name |
 | `et attach <name\|id>` | Reattach to an existing session |
