@@ -45,6 +45,7 @@ func main() {
 		killCmd(),
 		installCmd(),
 		uninstallCmd(),
+		upgradeCmd(),
 		agentCmd(),
 	)
 
