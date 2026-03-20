@@ -21,6 +21,9 @@ var WebDist embed.FS
 // Version is set from outside (cmd/et) to inject the build version.
 var Version string
 
+// Peers is the list of peer server addresses for aggregation.
+var Peers []string
+
 type Server struct {
 	manager  *session.Manager
 	upgrader websocket.Upgrader
@@ -47,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	mux.HandleFunc("GET /api/peers", s.handlePeers)
 
 	// WebSocket
 	mux.HandleFunc("GET /ws/session/{id}", s.handleWebSocket)
@@ -71,7 +75,22 @@ func (s *Server) Handler() http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	return mux
+	return corsMiddleware(mux)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +98,14 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"hostname": s.hostname,
 		"version":  Version,
 	})
+}
+
+func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
+	peers := Peers
+	if peers == nil {
+		peers = []string{}
+	}
+	writeJSON(w, http.StatusOK, peers)
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

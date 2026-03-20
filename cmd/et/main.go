@@ -56,6 +56,7 @@ func getClient(cmd *cobra.Command) *client.Client {
 func serverCmd() *cobra.Command {
 	var port int
 	var host string
+	var peers []string
 
 	cmd := &cobra.Command{
 		Use:   "server",
@@ -63,6 +64,23 @@ func serverCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			server.WebDist = webDist
 			server.Version = version
+
+			// Merge --peer flags and ET_PEERS env var
+			allPeers := append([]string{}, peers...)
+			if envPeers := os.Getenv("ET_PEERS"); envPeers != "" {
+				for _, p := range strings.Split(envPeers, ",") {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						allPeers = append(allPeers, p)
+					}
+				}
+			}
+			// Normalize peer addresses: add default port if missing
+			for i, p := range allPeers {
+				allPeers[i] = normalizePeerAddr(p)
+			}
+			server.Peers = allPeers
+
 			s := server.New()
 			addr := fmt.Sprintf("%s:%d", host, port)
 			return s.ListenAndServe(addr)
@@ -70,7 +88,30 @@ func serverCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&port, "port", 2840, "Port to listen on")
 	cmd.Flags().StringVar(&host, "host", "0.0.0.0", "Host to bind to")
+	cmd.Flags().StringArrayVar(&peers, "peer", nil, "Peer server address for session aggregation (can be specified multiple times)")
 	return cmd
+}
+
+// normalizePeerAddr ensures the peer address has a scheme and port.
+func normalizePeerAddr(addr string) string {
+	addr = strings.TrimRight(addr, "/")
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	// Add default port if not specified
+	// Strip scheme, check for port, re-add scheme
+	withoutScheme := addr
+	scheme := "http://"
+	if strings.HasPrefix(addr, "https://") {
+		scheme = "https://"
+		withoutScheme = strings.TrimPrefix(addr, "https://")
+	} else {
+		withoutScheme = strings.TrimPrefix(addr, "http://")
+	}
+	if !strings.Contains(withoutScheme, ":") {
+		withoutScheme = withoutScheme + ":2840"
+	}
+	return scheme + withoutScheme
 }
 
 func runCmd() *cobra.Command {

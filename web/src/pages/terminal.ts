@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { connectSession } from '../lib/ws'
 
-export function renderTerminal(mount: HTMLElement, sessionId: string) {
+export function renderTerminal(mount: HTMLElement, sessionId: string, serverBase = '') {
   mount.innerHTML = `
     <div class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
       <span class="text-gray-400 text-xs font-mono">${sessionId.substring(0, 8)}</span>
@@ -54,24 +54,28 @@ export function renderTerminal(mount: HTMLElement, sessionId: string) {
     container.style.height = `${naturalH}px`
   }
 
-  const ws = connectSession(sessionId, {
-    onOutput(data) {
-      term.write(data)
+  const ws = connectSession(
+    sessionId,
+    {
+      onOutput(data) {
+        term.write(data)
+      },
+      onExit(exitCode) {
+        statusEl.textContent = exitCode >= 0 ? `exited (${exitCode})` : 'disconnected'
+        statusEl.className = 'text-xs text-red-400'
+        term.write('\r\n\x1b[90m--- session ended ---\x1b[0m\r\n')
+      },
+      onOpen() {
+        statusEl.textContent = 'connected'
+        statusEl.className = 'text-xs text-green-400'
+      },
+      onResize(cols, rows) {
+        term.resize(cols, rows)
+        updateScale()
+      },
     },
-    onExit(exitCode) {
-      statusEl.textContent = exitCode >= 0 ? `exited (${exitCode})` : 'disconnected'
-      statusEl.className = 'text-xs text-red-400'
-      term.write('\r\n\x1b[90m--- session ended ---\x1b[0m\r\n')
-    },
-    onOpen() {
-      statusEl.textContent = 'connected'
-      statusEl.className = 'text-xs text-green-400'
-    },
-    onResize(cols, rows) {
-      term.resize(cols, rows)
-      updateScale()
-    },
-  })
+    serverBase,
+  )
 
   term.onData((data) => {
     ws.send(data)

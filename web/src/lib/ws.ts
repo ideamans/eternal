@@ -19,9 +19,27 @@ export interface ConnectOptions {
   onResize?: (cols: number, rows: number) => void
 }
 
-export function connectSession(sessionId: string, opts: ConnectOptions): SessionConnection {
-  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/session/${sessionId}`)
+/**
+ * Connect to a session via WebSocket.
+ * @param sessionId - The session ID to connect to.
+ * @param opts - Callbacks for output, exit, open, and resize events.
+ * @param serverBase - Base URL of the server (empty string for local).
+ */
+export function connectSession(sessionId: string, opts: ConnectOptions, serverBase = ''): SessionConnection {
+  let wsUrl: string
+
+  if (serverBase) {
+    // Peer server: derive WebSocket URL from HTTP base URL
+    const url = new URL(serverBase)
+    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    wsUrl = `${wsProtocol}//${url.host}/ws/session/${sessionId}`
+  } else {
+    // Local server: use current page host
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    wsUrl = `${wsProtocol}//${location.host}/ws/session/${sessionId}`
+  }
+
+  const ws = new WebSocket(wsUrl)
 
   const queue: string[] = []
   let opened = false

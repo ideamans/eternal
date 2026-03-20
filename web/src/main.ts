@@ -1,10 +1,26 @@
-import { listSessions, killSession, getInfo, type Session } from './lib/api'
+import { listAllSessions, killSession, getInfo, type AggregatedSession } from './lib/api'
 import { renderTerminal } from './pages/terminal'
 
 const app = document.getElementById('app')!
 
 let cleanup: (() => void) | undefined
 let refreshTimer: ReturnType<typeof setInterval> | undefined
+
+/** Map from composite key "serverBase:sessionId" to AggregatedSession for routing. */
+let sessionIndex = new Map<string, AggregatedSession>()
+
+/** Whether we have any peer servers configured. */
+let hasPeers = false
+
+function sessionKey(serverBase: string, sessionId: string): string {
+  return serverBase ? `${serverBase}|${sessionId}` : sessionId
+}
+
+function parseSessionKey(key: string): { serverBase: string; sessionId: string } {
+  const sep = key.lastIndexOf('|')
+  if (sep === -1) return { serverBase: '', sessionId: key }
+  return { serverBase: key.substring(0, sep), sessionId: key.substring(sep + 1) }
+}
 
 function init() {
   app.innerHTML = `
@@ -51,10 +67,12 @@ function onRoute() {
   const mainContent = document.getElementById('main-content')!
 
   if (match) {
+    const key = decodeURIComponent(match[1])
+    const { serverBase, sessionId } = parseSessionKey(key)
     mainContent.innerHTML = '<div id="terminal-mount" class="flex-1 flex flex-col"></div>'
     const mount = document.getElementById('terminal-mount')!
-    cleanup = renderTerminal(mount, match[1])
-    highlightActiveSession(match[1])
+    cleanup = renderTerminal(mount, sessionId, serverBase)
+    highlightActiveSession(key)
   } else {
     mainContent.innerHTML = `
       <div class="flex-1 flex items-center justify-center text-gray-500 text-sm">
@@ -69,7 +87,21 @@ async function refreshSessionList() {
   const listEl = document.getElementById('session-list')
   if (!listEl) return
 
-  const sessions = await listSessions()
+  let sessions: AggregatedSession[]
+  try {
+    sessions = await listAllSessions()
+  } catch {
+    return
+  }
+
+  // Track whether we have peers for display logic
+  hasPeers = sessions.some((s) => s.serverBase !== '')
+
+  // Rebuild session index
+  sessionIndex = new Map()
+  for (const s of sessions) {
+    sessionIndex.set(sessionKey(s.serverBase, s.id), s)
+  }
 
   if (sessions.length === 0) {
     listEl.innerHTML = `
@@ -80,22 +112,23 @@ async function refreshSessionList() {
     return
   }
 
-  // Group by dir basename
-  const groups = new Map<string, Session[]>()
+  // Group by (hostname + dir basename) when peers exist, otherwise just dir basename
+  const groups = new Map<string, AggregatedSession[]>()
   for (const s of sessions) {
     const dir = dirBasename(s.dir)
-    if (!groups.has(dir)) groups.set(dir, [])
-    groups.get(dir)!.push(s)
+    const groupName = hasPeers ? `${s.serverHostname}:${dir}` : dir
+    if (!groups.has(groupName)) groups.set(groupName, [])
+    groups.get(groupName)!.push(s)
   }
 
-  const activeId = getActiveSessionId()
+  const activeKey = getActiveSessionKey()
 
   let html = ''
-  for (const [dir, items] of groups) {
+  for (const [groupName, items] of groups) {
     html += `
       <div class="mt-2">
-        <div class="px-4 py-1 text-[10px] font-medium text-gray-500 uppercase tracking-wider">${escapeHtml(dir)}</div>
-        ${items.map((s) => sessionItem(s, s.id === activeId)).join('')}
+        <div class="px-4 py-1 text-[10px] font-medium text-gray-500 uppercase tracking-wider">${escapeHtml(groupName)}</div>
+        ${items.map((s) => sessionItem(s, sessionKey(s.serverBase, s.id) === activeKey)).join('')}
       </div>
     `
   }
@@ -103,21 +136,22 @@ async function refreshSessionList() {
   listEl.innerHTML = html
 
   // Attach event listeners
-  listEl.querySelectorAll('[data-session-id]').forEach((el) => {
+  listEl.querySelectorAll('[data-session-key]').forEach((el) => {
     el.addEventListener('click', (e) => {
       const target = e.target as HTMLElement
       if (target.closest('[data-kill]')) return
-      const id = (el as HTMLElement).dataset.sessionId!
-      location.hash = `#/session/${id}`
+      const key = (el as HTMLElement).dataset.sessionKey!
+      location.hash = `#/session/${encodeURIComponent(key)}`
     })
   })
 
   listEl.querySelectorAll('[data-kill]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation()
-      const id = (btn as HTMLElement).dataset.kill!
-      await killSession(id)
-      if (getActiveSessionId() === id) {
+      const key = (btn as HTMLElement).dataset.kill!
+      const { serverBase, sessionId } = parseSessionKey(key)
+      await killSession(sessionId, serverBase)
+      if (getActiveSessionKey() === key) {
         location.hash = '#/'
       }
       refreshSessionList()
@@ -125,14 +159,17 @@ async function refreshSessionList() {
   })
 }
 
-function sessionItem(s: Session, active: boolean): string {
+function sessionItem(s: AggregatedSession, active: boolean): string {
+  const key = sessionKey(s.serverBase, s.id)
   const cmd = s.command.join(' ')
   const short = cmd.length > 20 ? cmd.substring(0, 20) + '...' : cmd
   const time = new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const activeClass = active ? 'bg-gray-700/60 border-l-2 border-blue-400' : 'hover:bg-gray-700/40 border-l-2 border-transparent'
+  const activeClass = active
+    ? 'bg-gray-700/60 border-l-2 border-blue-400'
+    : 'hover:bg-gray-700/40 border-l-2 border-transparent'
 
   return `
-    <div data-session-id="${s.id}" class="group flex items-center gap-2 px-3 py-2 cursor-pointer ${activeClass}">
+    <div data-session-key="${escapeHtml(key)}" class="group flex items-center gap-2 px-3 py-2 cursor-pointer ${activeClass}">
       <div class="flex-1 min-w-0">
         <div class="text-xs font-mono text-gray-200 truncate">${escapeHtml(short)}</div>
         <div class="flex items-center gap-2 mt-0.5">
@@ -140,7 +177,7 @@ function sessionItem(s: Session, active: boolean): string {
           ${s.clients > 0 ? `<span class="text-[10px] text-green-500">${s.clients} connected</span>` : ''}
         </div>
       </div>
-      <button data-kill="${s.id}" class="opacity-0 group-hover:opacity-100 px-2 py-1 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded text-sm leading-none cursor-pointer" title="Kill session">&times;</button>
+      <button data-kill="${escapeHtml(key)}" class="opacity-0 group-hover:opacity-100 px-2 py-1 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded text-sm leading-none cursor-pointer" title="Kill session">&times;</button>
     </div>
   `
 }
@@ -151,15 +188,15 @@ function dirBasename(dir: string): string {
   return parts[parts.length - 1] || '/'
 }
 
-function getActiveSessionId(): string | null {
+function getActiveSessionKey(): string | null {
   const match = location.hash.match(/^#\/session\/(.+)$/)
-  return match ? match[1] : null
+  return match ? decodeURIComponent(match[1]) : null
 }
 
-function highlightActiveSession(id: string | null) {
-  document.querySelectorAll('[data-session-id]').forEach((el) => {
-    const elId = (el as HTMLElement).dataset.sessionId
-    if (elId === id) {
+function highlightActiveSession(key: string | null) {
+  document.querySelectorAll('[data-session-key]').forEach((el) => {
+    const elKey = (el as HTMLElement).dataset.sessionKey
+    if (elKey === key) {
       el.classList.add('bg-gray-700/60', 'border-blue-400')
       el.classList.remove('border-transparent', 'hover:bg-gray-700/40')
     } else {
